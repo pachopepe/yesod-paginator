@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE TypeFamilies      #-}
+{-# LANGUAGE RankNTypes        #-}
 -------------------------------------------------------------------------------
 -- |
 --
@@ -58,6 +59,7 @@ module Yesod.Paginator
 
 import Yesod
 import Yesod.Paginator.Widget
+import Control.Monad.Trans.Reader
 
 paginate :: Yesod m => Int -> [a] -> HandlerT m IO ([a], WidgetT m IO ())
 paginate = paginateWith defaultWidget
@@ -75,29 +77,27 @@ paginateWith widget per items = do
 
     return (xs, widget p per tot)
 
-selectPaginated :: ( PersistEntity val
-                   , (PersistQuery (YesodPersistBackend m (HandlerT m IO)))
-                   , (PersistMonadBackend (YesodPersistBackend m (HandlerT m IO)) ~ PersistEntityBackend val)
-                   , (MonadTrans (YesodPersistBackend m))
-                   , Yesod m
-                   )
-                => Int
-                -> [Filter val]
-                -> [SelectOpt val]
-                -> YesodDB m ([Entity val], WidgetT m IO ())
+selectPaginated :: forall m val.
+                   (PersistEntity val
+                   , PersistQuery (PersistEntityBackend val)
+                   , Yesod m) =>
+                   Int
+                   -> [Filter val]
+                   -> [SelectOpt val]
+                   -> ReaderT
+                   (PersistEntityBackend val) (HandlerT m IO) ([Entity val], WidgetT m IO ())
 selectPaginated = selectPaginatedWith defaultWidget
 
-selectPaginatedWith :: ( PersistEntity val
-                       , (PersistQuery (YesodPersistBackend m (HandlerT m IO)))
-                       , (PersistMonadBackend (YesodPersistBackend m (HandlerT m IO)) ~ PersistEntityBackend val)
-                       , (MonadTrans (YesodPersistBackend m))
-                       , Yesod m
-                       )
-                    => PageWidget m
-                    -> Int
-                    -> [Filter val]
-                    -> [SelectOpt val]
-                    -> YesodDB m ([Entity val], WidgetT m IO ())
+selectPaginatedWith :: forall m val t.
+                       (PersistEntity val
+                       , PersistQuery (PersistEntityBackend val)
+                       , Yesod m) =>
+                       (Int -> Int -> Int -> t)
+                       -> Int
+                       -> [Filter val]
+                       -> [SelectOpt val]
+                       -> ReaderT
+                       (PersistEntityBackend val) (HandlerT m IO) ([Entity val], t)
 selectPaginatedWith widget per filters selectOpts = do
     p   <- lift getCurrentPage
     tot <- count filters

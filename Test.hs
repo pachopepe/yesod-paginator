@@ -19,14 +19,14 @@ instance Yesod App where
     approot = ApprootRelative
     defaultLayout widget = do
         pc <- widgetToPageContent widget
-        giveUrlRenderer [hamlet|$newline never
+        withUrlRenderer [hamlet|$newline never
             $doctype 5
             <html lang="en">
                 <head>
                     <meta charset="utf-8">
                     <title>#{pageTitle pc}
                     <!-- steal boostrap -->
-                    <link rel="stylesheet" href="http://pbrisbin.com/static/css/bootstrap.min.css">
+                    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/css/bootstrap.min.css">
                     ^{pageHead pc}
                 <body>
                     ^{pageBody pc}

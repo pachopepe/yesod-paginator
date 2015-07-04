@@ -54,12 +54,18 @@ module Yesod.Paginator
     , paginateWith
     , selectPaginated
     , selectPaginatedWith
+    , rawSqlPaginated
+    , rawSqlPaginatedWith
     , module Yesod.Paginator.Widget
     ) where
 
 import Yesod
 import Yesod.Paginator.Widget
 import Control.Monad.Trans.Reader
+import qualified Data.Text as T
+import Database.Persist.Sql
+import qualified Data.Conduit.List as CL
+import Data.ByteString.Char8 (readInteger)
 
 paginate :: Yesod m => Int -> [a] -> HandlerT m IO ([a], WidgetT m IO ())
 paginate = paginateWith defaultWidget
@@ -104,3 +110,63 @@ selectPaginatedWith widget per filters selectOpts = do
     xs  <- selectList filters (selectOpts ++ [OffsetBy ((p-1)*per), LimitTo per])
 
     return (xs, widget p per tot)
+
+rawSqlPaginated :: (Yesod m, RawSql a) =>
+                   Int
+                   -> T.Text
+                   -> T.Text
+                   -> T.Text
+                   -> T.Text
+                   -> [PersistValue]
+                   -> ReaderT SqlBackend (HandlerT m IO) ([a], WidgetT m IO ())
+rawSqlPaginated = rawSqlPaginatedWith defaultWidget
+
+
+rawSqlPaginatedWith :: forall m a.
+                             (Yesod m, RawSql a) =>
+                             PageWidget m
+                             -> Int
+                             -> T.Text
+                             -> T.Text
+                             -> T.Text
+                             -> T.Text
+                             -> [PersistValue]
+                             -> ReaderT SqlBackend (HandlerT m IO) ([a], WidgetT m IO ())
+rawSqlPaginatedWith widget per select from sql order opts = do
+    p   <- lift getCurrentPage
+    tot <- getCount (selectFromWhere "count(*)" from sql) opts
+    xs  <- rawSql (T.concat ["SELECT "
+                            , select
+                            , " FROM "
+                            , from
+                            , " WHERE "
+                            , sql
+                            , " ORDER BY "
+                            , order
+                            ," LIMIT "
+                            ,T.pack . show $ per
+                            ," OFFSET "
+                            ,T.pack . show $ ((p-1)*per)])
+                  opts
+    return (xs, widget p per $ fromIntegral tot)
+  where selectFromWhere :: T.Text -> T.Text -> T.Text -> T.Text
+        selectFromWhere select from wher = T.concat ["SELECT "
+                                                    , select
+                                                    , " FROM "
+                                                    , from
+                                                    , " WHERE "
+                                                    , wher]
+
+getCount :: forall a (m :: * -> *).
+            (MonadIO m, Num a) =>
+            T.Text -> [PersistValue] -> ReaderT SqlBackend m a
+getCount sql opts = withRawQuery sql opts $ do
+  mm <- CL.head
+  case mm of
+   Just [PersistInt64 i] -> return $ fromIntegral i
+   Just [PersistDouble i] ->return $ fromIntegral (truncate i) -- gb oracle
+   Just [PersistByteString i] -> case readInteger i of -- gb mssql 
+                                  Just (ret,"") -> return $ fromIntegral ret
+                                  xs -> error $ "invalid number i["++show i++"] xs[" ++ show xs ++ "]"
+   Just xs -> error $ "count:invalid sql  return xs["++show xs++"] sql["++show sql++"]"
+   Nothing -> error $ "count:invalid sql returned nothing sql["++show sql++"]"

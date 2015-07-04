@@ -132,30 +132,23 @@ rawSqlPaginatedWith :: forall m a.
                              -> T.Text
                              -> [PersistValue]
                              -> ReaderT SqlBackend (HandlerT m IO) ([a], WidgetT m IO ())
-rawSqlPaginatedWith widget per select from sql order opts = do
+rawSqlPaginatedWith widget per select from wher order opts = do
     p   <- lift getCurrentPage
-    tot <- getCount (selectFromWhere "count(*)" from sql) opts
-    xs  <- rawSql (T.concat ["SELECT "
-                            , select
-                            , " FROM "
-                            , from
-                            , " WHERE "
-                            , sql
-                            , " ORDER BY "
-                            , order
+    tot <- getCount (T.concat [ "SELECT count(*) "
+                              , " FROM " `cndAppend` from
+                              , " WHERE " `cndAppend` wher]) opts
+    xs  <- rawSql (T.concat ["SELECT " , select
+                            , " FROM " `cndAppend` from
+                            , " WHERE " `cndAppend` wher
+                            , " ORDER BY " `cndAppend` order
                             ," LIMIT "
                             ,T.pack . show $ per
                             ," OFFSET "
                             ,T.pack . show $ ((p-1)*per)])
                   opts
     return (xs, widget p per $ fromIntegral tot)
-  where selectFromWhere :: T.Text -> T.Text -> T.Text -> T.Text
-        selectFromWhere select from wher = T.concat ["SELECT "
-                                                    , select
-                                                    , " FROM "
-                                                    , from
-                                                    , " WHERE "
-                                                    , wher]
+  where cndAppend :: T.Text -> T.Text -> T.Text
+        cndAppend prefix t = if T.null t then T.empty else prefix `T.append` t 
 
 getCount :: forall a (m :: * -> *).
             (MonadIO m, Num a) =>

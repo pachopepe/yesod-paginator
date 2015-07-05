@@ -51,10 +51,13 @@
 -------------------------------------------------------------------------------
 module Yesod.Paginator
     ( paginate
+    , paginateN
     , paginateWith
     , selectPaginated
+    , selectPaginatedN
     , selectPaginatedWith
     , rawSqlPaginated
+    , rawSqlPaginatedN
     , rawSqlPaginatedWith
     , module Yesod.Paginator.Widget
     ) where
@@ -69,6 +72,9 @@ import Data.ByteString.Char8 (readInteger)
 
 paginate :: Yesod m => Int -> [a] -> HandlerT m IO ([a], WidgetT m IO ())
 paginate = paginateWith defaultWidget
+
+paginateN :: Yesod m => Int -> Int -> [a] -> HandlerT m IO ([a], WidgetT m IO ())
+paginateN n = paginateWith (defaultWidgetN n)
 
 paginateWith :: Yesod m
              => PageWidget m
@@ -93,6 +99,18 @@ selectPaginated :: forall m val.
                    -> ReaderT
                    (PersistEntityBackend val) (HandlerT m IO) ([Entity val], WidgetT m IO ())
 selectPaginated = selectPaginatedWith defaultWidget
+
+selectPaginatedN :: forall m val.
+                   (PersistEntity val
+                   , PersistQuery (PersistEntityBackend val)
+                   , Yesod m) =>
+                   Int
+                   -> Int
+                   -> [Filter val]
+                   -> [SelectOpt val]
+                   -> ReaderT
+                   (PersistEntityBackend val) (HandlerT m IO) ([Entity val], WidgetT m IO ())
+selectPaginatedN n = selectPaginatedWith (defaultWidgetN n)
 
 selectPaginatedWith :: forall m val t.
                        (PersistEntity val
@@ -121,6 +139,16 @@ rawSqlPaginated :: (Yesod m, RawSql a) =>
                    -> ReaderT SqlBackend (HandlerT m IO) ([a], WidgetT m IO ())
 rawSqlPaginated = rawSqlPaginatedWith defaultWidget
 
+rawSqlPaginatedN :: (Yesod m, RawSql a) =>
+                   Int
+                   -> Int
+                   -> T.Text
+                   -> T.Text
+                   -> T.Text
+                   -> T.Text
+                   -> [PersistValue]
+                   -> ReaderT SqlBackend (HandlerT m IO) ([a], WidgetT m IO ())
+rawSqlPaginatedN n = rawSqlPaginatedWith (defaultWidgetN n)
 
 rawSqlPaginatedWith :: forall m a.
                              (Yesod m, RawSql a) =>

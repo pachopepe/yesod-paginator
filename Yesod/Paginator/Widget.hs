@@ -5,7 +5,9 @@
 module Yesod.Paginator.Widget
  ( getCurrentPage
  , paginationWidget
+ , paginationWidgetN
  , defaultWidget
+ , defaultWidgetN
  , defaultPageWidgetConfig
  , PageWidget
  , PageWidgetConfig(..)
@@ -136,10 +138,64 @@ paginationWidget (PageWidgetConfig {..}) page per tot = do
 --   default of 1 when conversion fails.
 getCurrentPage :: Yesod m => HandlerT m IO Int
 getCurrentPage = liftM (fromMaybe 1 . go) $ lookupGetParam "p"
-
     where
         go :: Maybe Text -> Maybe Int
         go mp = readIntegral . T.unpack =<< mp
 
 showT :: (Show a) => a -> Text
 showT = T.pack . show
+
+-- | A widget showing pagination links. Follows bootstrap principles.
+--   If there are enougth pages shows only n pages
+defaultWidgetN :: Yesod m => Int -> PageWidget m
+defaultWidgetN n = (paginationWidgetN n) defaultPageWidgetConfig
+
+-- | A widget showing pagination links. Follows bootstrap principles.
+--   Utilizes a \"p\" GET param but leaves all other GET params intact.
+--   If there are enougth pages shows only n pages
+paginationWidgetN :: Yesod m => Int -> PageWidgetConfig -> PageWidget m
+paginationWidgetN n (PageWidgetConfig {..}) page per tot = do
+    -- total / per + 1 for any remainder
+    let pages = (\(n, r) -> n + (min r 1)) $ tot `divMod` per
+    when (pages > 1) $ do
+        curParams <- handlerToWidget $ liftM reqGetParams getRequest
+        [whamlet|$newline never
+            <ul class="#{cls}">
+                $forall link <- buildLinks page pages
+                    ^{showLink curParams link}
+            |]
+    where
+        -- | Concatenate all additional classes.
+        cls = T.intercalate " " listClasses
+
+        -- | Build up each component of the overall list of links. We'll
+        --   use empty lists to denote ommissions along the way then
+        --   concatenate.
+        buildLinks :: Int -> Int -> [PageLink]
+        buildLinks pg pgs =
+            let d = n `div` 2
+                mn = 1 `max` (pg - d)
+                mx  = min (mn + (n - 1)) pgs
+                mn' = mn `min` (1 `max` (mx - n + 1))  
+                prev = [mn' .. pg - 1]
+                next = [pg + 1 .. mx]
+
+                -- these always appear
+                prevLink = [(if null prev then Disabled else Enabled (pg - 1)) prevText "prev"]
+                nextLink = [(if null next then Disabled else Enabled (pg + 1)) nextText "next"]
+
+                -- the middle lists, strip the first/last pages and
+                -- correctly take up to limit away from current
+                prevLinks = map (\p -> Enabled p (showT p) "prev") prev
+                nextLinks = map (\p -> Enabled p (showT p) "next") next
+
+                -- finally, this page itself
+                curLink = [Disabled (showT pg) "active"]
+
+            in concat $ (if ascending then id else reverse) [
+                      prevLink
+                      , prevLinks
+                      , curLink
+                      , nextLinks
+                      , nextLink
+                      ]

@@ -4,12 +4,15 @@
 {-# LANGUAGE FlexibleContexts #-}
 module Yesod.Paginator.Widget
  ( getCurrentPage
+-- , getCurrentParams
  , paginationWidget
- , paginationWidgetN
+-- , paginationWidgetN
+ , paginationWidgetG
  , defaultWidget
- , defaultWidgetN
+-- , defaultWidgetG
  , defaultPageWidgetConfig
  , PageWidget
+ , PageWidgetG
  , PageWidgetConfig(..)
  ) where
 
@@ -27,6 +30,7 @@ data PageWidgetConfig = PageWidgetConfig
     { prevText     :: Text   -- ^ The text for the 'previous page' link.
     , nextText     :: Text   -- ^ The text for the 'next page' link.
     , pageCount    :: Int    -- ^ The number of page links to show
+    , pageItems    :: Int    -- ^ The number of items per page
     , ascending    :: Bool   -- ^ Whether to list pages in ascending order.
     , showEllipsis :: Bool   -- ^ Whether to show an ellipsis if there are
                              --   more pages than pageCount
@@ -66,6 +70,7 @@ defaultPageWidgetConfig :: PageWidgetConfig
 defaultPageWidgetConfig = PageWidgetConfig { prevText     = "«"
                                            , nextText     = "»"
                                            , pageCount    = 9
+                                           , pageItems    = 10
                                            , ascending    = True
                                            , showEllipsis = True
                                            , listClasses  = ["pagination"]
@@ -145,23 +150,23 @@ getCurrentPage = liftM (fromMaybe 1 . go) $ lookupGetParam "p"
 showT :: (Show a) => a -> Text
 showT = T.pack . show
 
--- | A widget showing pagination links. Follows bootstrap principles.
---   If there are enougth pages shows only n pages
-defaultWidgetN :: Yesod m => Int -> PageWidget m
-defaultWidgetN n = (paginationWidgetN n) defaultPageWidgetConfig
+type PageWidgetG m = Int -> Int -> Int -> WidgetT m IO ()
 
 -- | A widget showing pagination links. Follows bootstrap principles.
 --   Utilizes a \"p\" GET param but leaves all other GET params intact.
 --   If there are enougth pages shows only n pages
-paginationWidgetN :: Yesod m => Int -> PageWidgetConfig -> PageWidget m
-paginationWidgetN n (PageWidgetConfig {..}) page per tot = do
-    -- total / per + 1 for any remainder
-    let pages = (\(n, r) -> n + (min r 1)) $ tot `divMod` per
-    when (pages > 1) $ do
+paginationWidgetG :: Yesod m =>
+                     PageWidgetConfig -- ^ Configuration
+                     -> Int -- ^ Begining page to display
+                     -> Int -- ^ Current page
+                     -> Int -- ^ End page to display
+                     -> WidgetT m IO () -- ^ The widget with page links
+paginationWidgetG (PageWidgetConfig {..}) bp pg ep = do
+    when (bp /= ep) $ do
         curParams <- handlerToWidget $ liftM reqGetParams getRequest
         [whamlet|$newline never
             <ul class="#{cls}">
-                $forall link <- buildLinks page pages
+                $forall link <- buildLinks bp pg ep
                     ^{showLink curParams link}
             |]
     where
@@ -171,18 +176,14 @@ paginationWidgetN n (PageWidgetConfig {..}) page per tot = do
         -- | Build up each component of the overall list of links. We'll
         --   use empty lists to denote ommissions along the way then
         --   concatenate.
-        buildLinks :: Int -> Int -> [PageLink]
-        buildLinks pg pgs =
-            let d = n `div` 2
-                mn = 1 `max` (pg - d)
-                mx  = min (mn + (n - 1)) pgs
-                mn' = mn `min` (1 `max` (mx - n + 1))  
-                prev = [mn' .. pg - 1]
-                next = [pg + 1 .. mx]
+        buildLinks :: Int -> Int -> Int -> [PageLink]
+        buildLinks beginPage page endPage =
+            let prev = [beginPage .. page - 1]
+                next = [page + 1 .. endPage]
 
                 -- these always appear
-                prevLink = [(if null prev then Disabled else Enabled (pg - 1)) prevText "prev"]
-                nextLink = [(if null next then Disabled else Enabled (pg + 1)) nextText "next"]
+                prevLink = [(if null prev then Disabled else Enabled (page - 1)) prevText "prev"]
+                nextLink = [(if null next then Disabled else Enabled (page + 1)) nextText "next"]
 
                 -- the middle lists, strip the first/last pages and
                 -- correctly take up to limit away from current
@@ -190,7 +191,7 @@ paginationWidgetN n (PageWidgetConfig {..}) page per tot = do
                 nextLinks = map (\p -> Enabled p (showT p) "next") next
 
                 -- finally, this page itself
-                curLink = [Disabled (showT pg) "active"]
+                curLink = [Disabled (showT page) "active"]
 
             in concat $ (if ascending then id else reverse) [
                       prevLink

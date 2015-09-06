@@ -3,6 +3,8 @@
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE TypeFamilies      #-}
 {-# LANGUAGE RankNTypes        #-}
+{-# LANGUAGE RecordWildCards   #-}
+
 -------------------------------------------------------------------------------
 -- |
 --
@@ -51,30 +53,26 @@
 -------------------------------------------------------------------------------
 module Yesod.Paginator
     ( paginate
-    , paginateN
     , paginateWith
     , selectPaginated
-    , selectPaginatedN
-    , selectPaginatedWith
-    , rawSqlPaginated
-    , rawSqlPaginatedN
-    , rawSqlPaginatedWith
+    , paginateWithG
+    , paginateG
+    , listP
+    , selectListP
+    , rawSqlP
+    , runDBP
     , module Yesod.Paginator.Widget
     ) where
 
 import Yesod
 import Yesod.Paginator.Widget
 import Control.Monad.Trans.Reader
-import qualified Data.Text as T
 import Database.Persist.Sql
-import qualified Data.Conduit.List as CL
-import Data.ByteString.Char8 (readInteger)
+import qualified Data.Text as T
 
+-- |
 paginate :: Yesod m => Int -> [a] -> HandlerT m IO ([a], WidgetT m IO ())
 paginate = paginateWith defaultWidget
-
-paginateN :: Yesod m => Int -> Int -> [a] -> HandlerT m IO ([a], WidgetT m IO ())
-paginateN n = paginateWith (defaultWidgetN n)
 
 paginateWith :: Yesod m
              => PageWidget m
@@ -100,18 +98,6 @@ selectPaginated :: forall m val.
                    (PersistEntityBackend val) (HandlerT m IO) ([Entity val], WidgetT m IO ())
 selectPaginated = selectPaginatedWith defaultWidget
 
-selectPaginatedN :: forall m val.
-                   (PersistEntity val
-                   , PersistQuery (PersistEntityBackend val)
-                   , Yesod m) =>
-                   Int
-                   -> Int
-                   -> [Filter val]
-                   -> [SelectOpt val]
-                   -> ReaderT
-                   (PersistEntityBackend val) (HandlerT m IO) ([Entity val], WidgetT m IO ())
-selectPaginatedN n = selectPaginatedWith (defaultWidgetN n)
-
 selectPaginatedWith :: forall m val t.
                        (PersistEntity val
                        , PersistQuery (PersistEntityBackend val)
@@ -126,68 +112,66 @@ selectPaginatedWith widget per filters selectOpts = do
     p   <- lift getCurrentPage
     tot <- count filters
     xs  <- selectList filters (selectOpts ++ [OffsetBy ((p-1)*per), LimitTo per])
-
     return (xs, widget p per tot)
 
-rawSqlPaginated :: (Yesod m, RawSql a) =>
-                   Int
-                   -> T.Text
-                   -> T.Text
-                   -> T.Text
-                   -> T.Text
-                   -> [PersistValue]
-                   -> ReaderT SqlBackend (HandlerT m IO) ([a], WidgetT m IO ())
-rawSqlPaginated = rawSqlPaginatedWith defaultWidget
+-- | Paginate with default config 
+paginateG :: forall m a.
+                 Yesod m =>
+                 (Int -> Int -> HandlerT m IO [a])
+                 -> HandlerT m IO ([a], WidgetT m IO ())
+paginateG = paginateWithG defaultPageWidgetConfig paginationWidgetG
 
-rawSqlPaginatedN :: (Yesod m, RawSql a) =>
-                   Int
-                   -> Int
-                   -> T.Text
-                   -> T.Text
-                   -> T.Text
-                   -> T.Text
-                   -> [PersistValue]
-                   -> ReaderT SqlBackend (HandlerT m IO) ([a], WidgetT m IO ())
-rawSqlPaginatedN n = rawSqlPaginatedWith (defaultWidgetN n)
+listP :: forall (m :: * -> *) a.
+               Monad m =>
+               [a] -> Int -> Int -> m [a]
+listP xs offset limit = return . take limit . drop offset $ xs
 
-rawSqlPaginatedWith :: forall m a.
-                             (Yesod m, RawSql a) =>
-                             PageWidget m
-                             -> Int
-                             -> T.Text
-                             -> T.Text
-                             -> T.Text
-                             -> T.Text
-                             -> [PersistValue]
-                             -> ReaderT SqlBackend (HandlerT m IO) ([a], WidgetT m IO ())
-rawSqlPaginatedWith widget per select from wher order opts = do
-    p   <- lift getCurrentPage
-    tot <- getCount (T.concat [ "SELECT count(*) "
-                              , " FROM " `cndAppend` from
-                              , " WHERE " `cndAppend` wher]) opts
-    xs  <- rawSql (T.concat ["SELECT " , select
-                            , " FROM " `cndAppend` from
-                            , " WHERE " `cndAppend` wher
-                            , " ORDER BY " `cndAppend` order
-                            ," LIMIT "
-                            ,T.pack . show $ per
-                            ," OFFSET "
-                            ,T.pack . show $ ((p-1)*per)])
-                  opts
-    return (xs, widget p per $ fromIntegral tot)
-  where cndAppend :: T.Text -> T.Text -> T.Text
-        cndAppend prefix t = if T.null t then T.empty else prefix `T.append` t 
+selectListP :: forall val (m :: * -> *).
+                     (PersistEntity val, PersistQuery (PersistEntityBackend val),
+                      MonadIO m) =>
+                     [Filter val]
+                     -> [SelectOpt val]
+                     -> Int
+                     -> Int
+                     -> ReaderT (PersistEntityBackend val) m [Entity val]
+selectListP flt opt offset limit = selectList flt (opt ++ [OffsetBy offset,LimitTo limit])
 
-getCount :: forall a (m :: * -> *).
-            (MonadIO m, Num a) =>
-            T.Text -> [PersistValue] -> ReaderT SqlBackend m a
-getCount sql opts = withRawQuery sql opts $ do
-  mm <- CL.head
-  case mm of
-   Just [PersistInt64 i] -> return $ fromIntegral i
-   Just [PersistDouble i] ->return $ fromIntegral (truncate i) -- gb oracle
-   Just [PersistByteString i] -> case readInteger i of -- gb mssql 
-                                  Just (ret,"") -> return $ fromIntegral ret
-                                  xs -> error $ "invalid number i["++show i++"] xs[" ++ show xs ++ "]"
-   Just xs -> error $ "count:invalid sql  return xs["++show xs++"] sql["++show sql++"]"
-   Nothing -> error $ "count:invalid sql returned nothing sql["++show sql++"]"
+rawSqlP :: forall (m :: * -> *) a a1.
+                 (RawSql a, PersistField a1, MonadIO m) =>
+                 T.Text -> [PersistValue] -> a1 -> a1 -> ReaderT SqlBackend m [a]
+rawSqlP query opt offset limit = rawSql (query `T.append` " OFFSET ? LIMIT ? ") (opt ++ map toPersistValue [offset,limit])
+
+runDBP :: forall site a t t1.
+                YesodPersist site =>
+                (t -> t1 -> YesodDB site a) -> t -> t1 -> HandlerT site IO a
+runDBP f limit offset = runDB $ f limit offset
+
+paginateWithG :: forall m a t.
+                 Yesod m =>
+                 PageWidgetConfig
+                 -> (PageWidgetConfig -> Int -> Int -> Int -> t)
+                 -> (Int -> Int -> HandlerT m IO [a])
+                 -> HandlerT m IO ([a], t)
+paginateWithG pc widget f = do
+    page <- getCurrentPage
+    (xs,beginPage,page',endPage) <- obtainBounds pc page f
+    return (xs, widget pc beginPage page' endPage)
+
+obtainBounds :: forall (m :: * -> *) a.
+                    Monad m =>
+                    PageWidgetConfig
+                    -> Int -> (Int -> Int -> m [a]) -> m ([a], Int, Int, Int)
+obtainBounds (PageWidgetConfig {..}) page f =
+  obtainPage' bp0 page ep0
+ where bp0 = (max (page - pageCount `div` 2) 1)
+       ep0 = bp0 + (pageCount - 1)
+       obtainPage' bp p ep = do
+         let offset = (p - 1)*pageItems
+             limit  = (ep - p + 1)*pageItems
+         toEnd <- f offset limit
+         let n = length toEnd
+         let xs = take pageItems toEnd
+             (a,b) = n `divMod` pageItems
+             ep'   = p + a - if b == 0 then 1 else 0
+         return (xs,bp,p,ep')
+

@@ -35,14 +35,15 @@ instance Yesod App where
 getRootR :: Handler Html
 getRootR = do
     -- unneeded return here to match README
-    things' <- return [1..1142]
-
-    (things, widget) <- paginate 3 things'
+    (things, widget) <-
+      paginateWithG defaultPageWidgetConfig
+                    paginationWidgetM
+                    (listP [1..1142])
 
     defaultLayout $ do
         setTitle "My title"
         [whamlet|$newline never
-            <h1>Pagination
+         <h1>Pagination
             <p>The things:
             <ul>
                 $forall thing <- things
@@ -53,4 +54,4 @@ getRootR = do
             |]
 
 main :: IO ()
-main = run 3000 =<< toWaiApp App
+main = run 3001 =<< toWaiApp App
